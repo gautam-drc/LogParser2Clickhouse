@@ -20,6 +20,8 @@ client = clickhouse_connect.get_client(
     password=PASSWORD
 )
 
+# Gautam Savasaviya
+
 # Pandas dtype to ClickHouse type mapping
 DATATYPE_MAPPING: Dict[str, str] = {
     "int64": "Int64",
