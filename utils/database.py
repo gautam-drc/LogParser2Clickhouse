@@ -53,7 +53,7 @@ def create_database() -> None:
         logging.error(f"Error creating database `{DATABASE}`: {e}", exc_info=True)
 
 
-def generate_table_query(columns: Dict[str, str], tbl: str, ord_by: Union[str, List[str], tuple]) -> str:
+def generate_create_table_query(columns: Dict[str, str], tbl: str, ord_by: Union[str, List[str], tuple]) -> str:
     """
     Generates a CREATE TABLE SQL query for ClickHouse.
 
@@ -96,7 +96,7 @@ def create_table(columns: Dict[str, str], tbl: str, ord_by: Union[str, List[str]
     """
     try:
         create_database()
-        query = generate_table_query(columns, tbl, ord_by)
+        query = generate_create_table_query(columns, tbl, ord_by)
         client.command(query)
         logging.info(f"Table `{tbl}` created successfully.")
     except Exception as e:
