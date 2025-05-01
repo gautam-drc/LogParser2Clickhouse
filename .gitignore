@@ -1,4 +1,4 @@
-# Ignore virtual environment folder
+# Ignore Python virtual environment
 .venv/
 
 # Ignore environment variable files
@@ -7,10 +7,9 @@
 # Ignore data folder
 data/
 
-# Ignore Python cache folders
-**/__pycache__/
-**/*.py[cod]
-
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
 
 # Ignore log files
-.log
+*.log
