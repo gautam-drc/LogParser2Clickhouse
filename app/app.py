@@ -19,6 +19,13 @@ def main() -> None:
     - Course
     - Login
     """
+
+    tables = ['enrollment', 'instructor', 'course', 'login']
+    tbl_columns = {tbl: None for tbl in tables}
+
+    for table in tables:
+        remove_table_data(table)
+
     try:
         # Step 1: Read logs from each category
         enroll_logs = read_logs(LOG_FILES.get('enrollment'), 'enrollment')
@@ -35,6 +42,7 @@ def main() -> None:
                 columns=columns,
                 ord_by=('user_id', 'course_id')
             )
+            tbl_columns['enrollment'] = columns
 
         if instructor_logs:
             columns = instructor_log_csv(instructor_logs, 'instructor')
@@ -44,6 +52,7 @@ def main() -> None:
                 columns=columns,
                 ord_by=('id', 'course_id')
             )
+            tbl_columns['instructor'] = columns
 
         if course_logs:
             columns = log_to_csv(course_logs, 'course')
@@ -53,6 +62,7 @@ def main() -> None:
                 columns=columns,
                 ord_by='course_id'
             )
+            tbl_columns['course'] = columns
 
         if login_logs:
             columns = log_to_csv(login_logs, 'login')
@@ -62,9 +72,19 @@ def main() -> None:
                 columns=columns,
                 ord_by=('user_id', 'timestamp')
             )
+            tbl_columns['login'] = columns
 
         # Step 3: Create materialized view for course enrollment summary
-        create_materialized_view(view='course_enrollment')
+
+        join_conditions = {
+            ('enrollment', 'course'):'course_id',
+            ('course', 'instructor'):'course_id',
+            ('enrollment', 'login'):'user_id'
+        }
+
+        
+
+        create_materialized_view(view='course_enrollment', tables_columns=tbl_columns, from_table='enrollment', join_column=join_conditions, ord_by=('e_user_id', 'e_course_id'))
 
         # Step 4: Clear offset files to avoid reprocessing
         for file in OFFSET_FILES.values():
