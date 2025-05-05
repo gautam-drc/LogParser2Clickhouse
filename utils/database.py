@@ -20,6 +20,8 @@ client = clickhouse_connect.get_client(
     password=PASSWORD
 )
 
+# Gautam Savasaviya
+
 # Pandas dtype to ClickHouse type mapping
 DATATYPE_MAPPING: Dict[str, str] = {
     "int64": "Int64",
@@ -32,7 +34,7 @@ DATATYPE_MAPPING: Dict[str, str] = {
     "uint8": "UInt8",
     "float64": "Float64",
     "float32": "Float32",
-    "bool": "Bool",  
+    "bool": "Bool",
     "datetime64[ns]": "Nullable(DateTime)",
     "datetime64[ns, UTC]": "Nullable(DateTime)",
     "timedelta64[ns]": "Int64",  # Representing duration
@@ -50,7 +52,8 @@ def create_database() -> None:
         client.command(f"CREATE DATABASE IF NOT EXISTS `{DATABASE}`")
         logging.info(f"Database `{DATABASE}` created or already exists.")
     except Exception as e:
-        logging.error(f"Error creating database `{DATABASE}`: {e}", exc_info=True)
+        logging.error(
+            f"Error creating database `{DATABASE}`: {e}", exc_info=True)
 
 
 def generate_table_query(columns: Dict[str, str], tbl: str, ord_by: Union[str, List[str], tuple]) -> str:
@@ -70,7 +73,8 @@ def generate_table_query(columns: Dict[str, str], tbl: str, ord_by: Union[str, L
             f"{col} {'DateTime' if col in ['update_time', 'timestamp'] else DATATYPE_MAPPING.get(str(dtype), 'String')}"
             for col, dtype in columns.items()
         ]
-        order_by_clause = ", ".join(ord_by) if isinstance(ord_by, (list, tuple)) else ord_by
+        order_by_clause = ", ".join(ord_by) if isinstance(
+            ord_by, (list, tuple)) else ord_by
 
         query = f"""
         CREATE TABLE IF NOT EXISTS `{DATABASE}`.`{tbl}` (
@@ -115,7 +119,9 @@ def insert_csv_file(file: str, tbl: str, columns: Dict[str, str], ord_by: Union[
     """
     try:
         create_table(columns=columns, tbl=tbl, ord_by=ord_by)
-        insert_file(client=client, database=DATABASE, table=tbl, file_path=str(file), fmt='CSVWithNames') # Convert Path object to string, as insert_file expects a string path, not a pathlib.Path object
+        # Convert Path object to string, as insert_file expects a string path, not a pathlib.Path object
+        insert_file(client=client, database=DATABASE, table=tbl,
+                    file_path=str(file), fmt='CSVWithNames')
         client.command(f'OPTIMIZE TABLE `{DATABASE}`.`{tbl}` FINAL')
         logging.info(f"Data inserted and optimized for table `{tbl}`.")
     except Exception as e:
@@ -136,75 +142,151 @@ def remove_table_data(tbl: str) -> None:
         logging.error(f"Error truncating table `{tbl}`: {e}", exc_info=True)
 
 
-def create_table_for_view(view: str) -> None:
+def generate_join_query(
+    tables_columns: Dict[str, List[str]],
+    from_table: str,
+    join_column: Dict[tuple[str, str], str]
+) -> str:
     """
-    Creates a table to store data for a materialized view if it doesn't exist.
-
+    Generates a SQL JOIN query based on the provided tables, columns, and join conditions.
     Parameters:
-        view (str): Name of the target view (table will use the same name).
+        tables_columns (Dict[str, List[str]]): Dictionary of table names and their columns.
+        from_table (str): The main table to select from.
+        join_column (Dict[tuple[str, str], str]): Dictionary of join conditions.
+            Each key is a tuple of (table1, table2) and the value is the join column.
+            Make sure table1 is base table and table2 is the one to join. and all pairs are in proper sequence.
+
+            Example:
+            {
+                ('enrollment', 'course'): 'course_id', # enrollment and course joins on course_id
+                ('course', 'instructor'): 'course_id' # course and instructor joins on course_id
+            }
+    Returns:
+        str: SQL JOIN query string.
     """
+
+    if tables_columns is None or len(tables_columns) <= 1:
+        raise ValueError("At least two tables are required for a JOIN query.")
+
+    if from_table not in tables_columns:
+        raise ValueError("From table is not in tables list")
+
     try:
-        exists = client.command(f"EXISTS TABLE `{DATABASE}`.`{view}`")
-        if exists == 0:
-            create_table_query = f'''
-            CREATE TABLE IF NOT EXISTS `{DATABASE}`.`{view}` (
-                user_id Int64,
-                join_date Nullable(DateTime),
-                username String,
-                course_id String,
-                course_name String,
-                organization String,
-                course_created_date Nullable(DateTime),
-                course_status String,
-                enroll_date Nullable(DateTime),
-                is_enrolled UInt8,
-                is_course_complete Int64,
-                instructor_id Int64,
-                instructor_username String
-            ) ENGINE = MergeTree()
-            ORDER BY (user_id)
-            '''
-            client.command(create_table_query)
-            logging.info(f"Table `{view}` created successfully for materialized view.")
-        else:
-            logging.info(f"Table `{view}` already exists.")
+
+        table_alias = {tbl: ''.join(word[0] for word in tbl.split(
+            '_')) for tbl in tables_columns.keys()}
+
+        query = f"SELECT "
+
+        for tbl, cols in tables_columns.items():
+            query += ", ".join(
+                [f"{table_alias[tbl]}.{col} AS {table_alias[tbl]}_{col}" for col in cols]) + ", "
+        query = query.rstrip(", ")
+
+        query += f" FROM {DATABASE}.{from_table} AS {table_alias[from_table]}"
+
+        for (tbl1, tbl2), col in join_column.items():
+            tbl1_alias = table_alias[tbl1]
+            tbl2_alias = table_alias[tbl2]
+
+            query += f" LEFT JOIN {DATABASE}.{tbl2} AS {tbl2_alias} ON {tbl1_alias}.{col} = {tbl2_alias}.{col}"
+
+        logging.info("Generated JOIN query successfully.")
+        logging.debug(f"Generated JOIN query:\n{query}")
+        return query.rstrip()
+
     except Exception as e:
-        logging.error(f"Error creating view table `{view}`: {e}", exc_info=True)
+        logging.error(f"Error generating JOIN query: {e}", exc_info=True)
+        return ""
 
 
-def create_materialized_view(view: str, refresh_rate: int = 30) -> None:
+def create_view_table(
+    view: str,
+    columns: Dict[str, Dict[str, str]],
+    ord_by: Union[str, List[str], tuple]
+) -> None:
     """
-    Creates a materialized view in ClickHouse with periodic refresh.
+    Creates a view table in ClickHouse if it doesn't exist.
+    Parameters:
+        view (str): Name of the view.
+        columns (Dict[str, Dict[str, str]]): Dictionary of column names and their types.
+        ord_by (Union[str, List[str], tuple]): Column(s) to order by.
 
+    Returns:
+        None
+    """
+    if not columns:
+        raise ValueError("Columns dictionary cannot be empty.")
+    if not ord_by or ord_by is None:
+        raise ValueError("Order by clause can not be none or empty.")
+
+    try:
+        is_exists = client.command(f"EXISTS TABLE `{DATABASE}`.`{view}`")
+
+        if not is_exists:
+            query = f"CREATE TABLE IF NOT EXISTS `{DATABASE}`.`{view}`"
+            table_alias = {tbl: ''.join(
+                word[0] for word in tbl.split('_')) for tbl in columns.keys()}
+            fields = [
+                f"{table_alias[tbl]}_{col} {'DateTime' if col in ['update_time', 'timestamp'] else DATATYPE_MAPPING.get(str(dtype), 'String')}"
+                for tbl, cols in columns.items() for col, dtype in cols.items()
+            ]
+
+            # TODO: Add prefix of table name to the column name
+            order_by_clause = ", ".join(ord_by) if isinstance(
+                ord_by, (list, tuple)) else ord_by
+            query += f"({', '.join(fields)}) ENGINE = MergeTree() ORDER BY ({order_by_clause})"
+            client.command(query)
+
+        logging.info(f"View table `{view}` created.")
+    except Exception as e:
+        logging.error(
+            f"Error creating view table `{view}`: {e}", exc_info=True)
+
+
+def create_materialized_view(
+        view: str, 
+        tables_columns: Dict[str, Dict[str, str]],
+        from_table: str,
+        join_column: Dict[tuple[str, str], str], 
+        ord_by: Union[str, List[str], tuple],
+        refresh_rate: int = 30
+    ) -> None:
+    """
+    Create a materialized view in ClickHouse with periodic refresh.
     Parameters:
         view (str): Base name for the view; materialized view will be `{view}_mv`.
+        tables_columns (Dict[str, Dict[str, str]]): Dictionary of table names and their columns with pandas data type.
+        from_table (str): The main table to select from.
+        join_column (Dict[tuple[str, str], str]): Dictionary of join conditions.
+            Each key is a tuple of (table1, table2) and the value is the join column.
+            Make sure table1 is base table and table2 is the one to join. and all pairs are in proper sequence.
+
+            Example:
+            {
+                ('enrollment', 'course'): 'course_id', # enrollment and course joins on course_id
+                ('course', 'instructor'): 'course_id' # course and instructor joins on course_id
+            }
+        ord_by (Union[str, List[str], tuple]): Column(s) to order by.
         refresh_rate (int): Refresh interval in minutes (default is 30).
+    Returns:
+        None
+    
     """
     try:
-        create_table_for_view(view)
+        create_view_table(view=view, columns=tables_columns, ord_by=ord_by)
+
+        tables_columns = {table: [col for col in columns.keys()] for table, columns in tables_columns.items()}
+        join_query = generate_join_query(tables_columns=tables_columns, from_table=from_table,join_column=join_column)
 
         query = f'''
         CREATE MATERIALIZED VIEW IF NOT EXISTS `{DATABASE}`.`{view}_mv`
         REFRESH EVERY {refresh_rate} MINUTE TO `{DATABASE}`.`{view}` AS
-        SELECT 
-            e.user_id, 
-            e.join_date, 
-            e.username AS username, 
-            c.course_id AS course_id, 
-            c.course_name, 
-            c.organization, 
-            c.course_created_date, 
-            c.course_status, 
-            e.enroll_date, 
-            e.is_enrolled, 
-            e.is_course_complete, 
-            i.id AS instructor_id, 
-            i.username AS instructor_username 
-        FROM `{DATABASE}`.`enrollment` AS e
-        LEFT JOIN `{DATABASE}`.`course` AS c ON e.course_id = c.course_id 
-        LEFT JOIN `{DATABASE}`.`instructor` AS i ON c.course_id = i.course_id;
+        {join_query}
         '''
         client.command(query)
-        logging.info(f"Materialized view `{view}_mv` created with refresh rate of {refresh_rate} minutes.")
+        logging.info(
+            f"Materialized view `{view}_mv` created with refresh rate of {refresh_rate} minutes.")
     except Exception as e:
-        logging.error(f"Error creating materialized view `{view}_mv`: {e}", exc_info=True)
+        logging.error(
+            f"Error creating materialized view `{view}_mv`: {e}", exc_info=True)
