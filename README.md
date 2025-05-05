@@ -1,6 +1,6 @@
 # LogParser2Clickhouse
 
-This project is designed to facilitate collaboration and communication among Wipro partners. It provides a platform for sharing resources, discussions, and updates.
+This project provides an efficient pipeline for processing logs, extracting relevant data, and storing it into a ClickHouse database. It supports the creation of dynamic materialized views for optimised querying and joins across multiple tables, enabling seamless analytics and reporting.
 
 ## Features
 - Partner collaboration tools
